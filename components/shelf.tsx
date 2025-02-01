@@ -2,7 +2,7 @@ import Image from "next/image"
 import Link from "next/link"
 
 const widgets = [
-  { title: "Auto Screenshotter", image: "/Pictures/screen-capture.png", slug: "autoscreen" },
+  { title: "Auto Screenshotter", image: "/images/screen-capture.png", slug: "autoscreen" },
   { title: "Calendar", image: "/placeholder.svg?height=200&width=240", slug: "calendar" },
   { title: "Messages", image: "/placeholder.svg?height=200&width=240", slug: "messages" },
   { title: "Tasks", image: "/placeholder.svg?height=200&width=240", slug: "tasks" },
