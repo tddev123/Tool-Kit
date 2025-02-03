@@ -3,7 +3,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+     "postinstall": "apt-get update && apt-get install -y python3"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.10",
