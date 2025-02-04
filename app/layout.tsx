@@ -48,7 +48,7 @@ export default function RootLayout({
                 <Link href="/">Home</Link>
                 <Link href="/features">Features</Link>
                 <Link href="/pricing">Pricing</Link>
-                <Link href="/about">About</Link>
+                <Link href="/">More Tools</Link>
               </nav>
               {!hasEnvVars ? <EnvVarWarning /> : <HeaderAuth />}
             </div>
