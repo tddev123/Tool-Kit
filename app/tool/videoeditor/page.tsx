@@ -1,4 +1,4 @@
-"use client"
+
 
 import MediaConverter from "@/components/MediaConverter";
 import ParticlesComponent from "@/components/Particles";
