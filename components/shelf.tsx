@@ -24,8 +24,8 @@ const widgets = [
     data: "5 unread",
   },
   {
-    title: "Tasks",
-    slug: "tasks",
+    title: "y2w",
+    slug: "y2w",
     icon: CheckSquare,
     color: "text-purple-400",
     data: "2 due today",
