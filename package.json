@@ -34,8 +34,8 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-player": "^2.16.0",
-    "tsparticles": "^3.8.1",
-    "yt-dlp-exec": "^1.0.2"
+    "tsparticles": "^3.8.1"
+    
   },
   "devDependencies": {
     "@types/ffmpeg.js": "^3.1.6",
