@@ -10,8 +10,8 @@ const widgets = [
     data: "Last: 2m ago",
   },
   {
-    title: "Youtube to MP3/WAV",
-    slug: "YoutubeConverter",
+    title: "noway",
+    slug: "noway",
     icon: Play,
     color: "text-blue-400",
     data: "3 events today",

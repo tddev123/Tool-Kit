@@ -1,159 +1,404 @@
-'use client';
+"use client"
 
-import React, { useState, useRef, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import { fetchFile } from '@ffmpeg/util';
+import type React from "react"
+import { useState, useRef, useEffect } from "react"
+import dynamic from "next/dynamic"
+import type { FFmpeg } from "@ffmpeg/ffmpeg"
+import { fetchFile } from "@ffmpeg/util"
 
-// Dynamically import ReactPlayer with SSR disabled
-const ReactPlayer = dynamic(() => import('react-player'), {
+const ReactPlayer = dynamic(() => import("react-player"), {
   ssr: false,
-  loading: () => <div>Loading player...</div>
-});
+  loading: () => <div>Loading player...</div>,
+})
+
+interface CompositeOptions {
+  blur: boolean
+  sticker: boolean
+}
+
+// This function creates a composite image using a canvas. It will
+// optionally draw a blurred background and/or overlay the sticker in the bottom-right.
+const createCompositeImage = (
+  imageDataUrl: string,
+  width: number,
+  height: number,
+  options: CompositeOptions,
+): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = "anonymous"
+    img.onload = async () => {
+      const canvas = document.createElement("canvas")
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext("2d")
+      if (!ctx) {
+        reject("Canvas not supported")
+        return
+      }
+
+      // If blur option is enabled, draw the blurred background first.
+      if (options.blur) {
+        ctx.filter = "blur(20px)"
+        // Calculate "cover" scale: fill the canvas while preserving aspect ratio.
+        const scaleCover = Math.max(width / img.width, height / img.height)
+        const coverWidth = img.width * scaleCover
+        const coverHeight = img.height * scaleCover
+        const coverDx = (width - coverWidth) / 2
+        const coverDy = (height - coverHeight) / 2
+        ctx.drawImage(img, coverDx, coverDy, coverWidth, coverHeight)
+      } else {
+        // If not using blur, fill background (black) if desired.
+        ctx.fillStyle = "black"
+        ctx.fillRect(0, 0, width, height)
+      }
+
+      // Draw the main image using a "contain" effect.
+      ctx.filter = "none"
+      const scaleContain = Math.min(width / img.width, height / img.height)
+      const containWidth = img.width * scaleContain
+      const containHeight = img.height * scaleContain
+      const containDx = (width - containWidth) / 2
+      const containDy = (height - containHeight) / 2
+      ctx.drawImage(img, containDx, containDy, containWidth, containHeight)
+
+      // If sticker option is enabled, load and draw the sticker image.
+      if (options.sticker) {
+        // Create a new Image for the sticker.
+        const stickerImgUrl: string = "/static/images/sticker.png"
+
+        const stickerImg = new Image()
+        stickerImg.crossOrigin = "anonymous"
+        stickerImg.onload = () => {
+          // For example, set the sticker width to 20% of the canvas width.
+          const stickerWidth = width * 0.1
+          const stickerAspect = stickerImg.height / stickerImg.width
+          const stickerHeight = stickerWidth * stickerAspect
+          // Place the sticker in the bottom-right with a 10px margin.
+          const stickerX = width - stickerWidth - 20
+          const stickerY = height - stickerHeight - 20
+          ctx.drawImage(stickerImg, stickerX, stickerY, stickerWidth, stickerHeight)
+
+          // Return the final composite image as a blob.
+          canvas.toBlob((blob) => {
+            if (blob) resolve(blob)
+            else reject("Failed to create blob from canvas")
+          }, "image/png")
+        }
+        stickerImg.onerror = () => {
+          reject("Failed to load sticker image")
+        }
+        stickerImg.src = stickerImgUrl
+      } else {
+        // If no sticker is used, simply return the composite image.
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob)
+          else reject("Failed to create blob from canvas")
+        }, "image/png")
+      }
+    }
+    img.onerror = reject
+    img.src = imageDataUrl
+  })
+}
 
 const MediaConverter: React.FC = () => {
-  const [image, setImage] = useState<string | null>(null);
-  const [audio, setAudio] = useState<string | null>(null);
-  const [audioDuration, setAudioDuration] = useState<number>(0);
-  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
-  const [videoQuality, setVideoQuality] = useState<'low' | 'medium' | 'high'>('medium');
-  const [audioQuality, setAudioQuality] = useState<'low' | 'medium' | 'high'>('medium');
-  const [processing, setProcessing] = useState<boolean>(false);
-  const [progress, setProgress] = useState<number>(0);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [ffmpeg, setFFmpeg] = useState<FFmpeg | null>(null);
+  const [image, setImage] = useState<string | null>(null)
+  const [audio, setAudio] = useState<string | null>(null)
+  const [audioDuration, setAudioDuration] = useState<number>(0)
+  const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9")
+  const [videoQuality, setVideoQuality] = useState<"low" | "medium" | "high">("medium")
+  const [audioQuality, setAudioQuality] = useState<"low" | "medium" | "high">("medium")
+  const [conversionSpeed, setConversionSpeed] = useState<"fast" | "normal" | "slow">("fast")
+  const [processing, setProcessing] = useState<boolean>(false)
+  const [progress, setProgress] = useState<number>(0)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [ffmpeg, setFFmpeg] = useState<FFmpeg | null>(null)
+  const [useBlurBackground, setUseBlurBackground] = useState<boolean>(false)
+  const [useSticker, setUseSticker] = useState<boolean>(false)
 
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
-  const progressHandlerRef = useRef<(({ message }: { message: string }) => void) | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const audioInputRef = useRef<HTMLInputElement>(null)
+  const progressHandlerRef = useRef<(({ message }: { message: string }) => void) | null>(null)
 
+  // Load FFmpeg on the client side
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== "undefined") {
       const loadFFmpeg = async () => {
         try {
-          const FFmpeg = (await import('@ffmpeg/ffmpeg')).FFmpeg;
-          const instance = new FFmpeg();
-          await instance.load();
-          setFFmpeg(instance);
+          const FFmpegModule = (await import("@ffmpeg/ffmpeg")).FFmpeg
+          const instance = new FFmpegModule()
+          await instance.load()
+          setFFmpeg(instance)
         } catch (error) {
-          console.error('Error loading FFmpeg:', error);
+          console.error("Error loading FFmpeg:", error)
         }
-      };
-      loadFFmpeg();
+      }
+      loadFFmpeg()
     }
-  }, []);
+  }, [])
 
   const handleImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const file = event.target.files?.[0]
     if (file) {
-      const reader = new FileReader();
+      const reader = new FileReader()
       reader.onload = (e) => {
-        setImage(e.target?.result as string);
-      };
-      reader.readAsDataURL(file);
+        setImage(e.target?.result as string)
+      }
+      reader.readAsDataURL(file)
     }
-  };
+  }
 
   const handleAudioChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && typeof window !== 'undefined') {
-      const reader = new FileReader();
+    const file = event.target.files?.[0]
+    if (file && typeof window !== "undefined") {
+      const reader = new FileReader()
       reader.onload = async (e) => {
-        const arrayBuffer = e.target?.result as ArrayBuffer;
-        const url = URL.createObjectURL(new Blob([arrayBuffer], { type: file.type }));
-        setAudio(url);
-        
+        const arrayBuffer = e.target?.result as ArrayBuffer
+        const url = URL.createObjectURL(new Blob([arrayBuffer], { type: file.type }))
+        setAudio(url)
+
         try {
-          const audioContext = new AudioContext();
-          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-          setAudioDuration(audioBuffer.duration);
+          const audioContext = new AudioContext()
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+          setAudioDuration(audioBuffer.duration)
         } catch (error) {
-          console.error('Error decoding audio:', error);
-          setAudioDuration(0);
+          console.error("Error decoding audio:", error)
+          setAudioDuration(0)
         }
-      };
-      reader.readAsArrayBuffer(file);
+      }
+      reader.readAsArrayBuffer(file)
     }
-  };
+  }
+
+  // Updated composite function now accepts options for blur and sticker.
+  // (see the top-level createCompositeImage function above)
 
   const handleConvertToVideo = async () => {
     if (!ffmpeg) {
-      console.error('FFmpeg not initialized');
-      return;
+      console.error("FFmpeg not initialized")
+      return
     }
 
-    const imageFile = imageInputRef.current?.files?.[0];
-    const audioFile = audioInputRef.current?.files?.[0];
+    const audioFile = audioInputRef.current?.files?.[0]
+    if (!audioFile || !audioDuration) return
 
-    if (!imageFile || !audioFile || !audioDuration) return;
+    // Determine output dimensions based on aspect ratio.
+    const outputWidth = aspectRatio === "16:9" ? 1280 : 720
+    const outputHeight = aspectRatio === "16:9" ? 720 : 1280
+    const videoBitrates = { low: "500k", medium: "1000k", high: "5000k" }
+    const audioBitrates = { low: "64k", medium: "128k", high: "320k" }
 
-    setProcessing(true);
-    setProgress(0);
+    // Choose conversion preset based on conversion speed.
+    const presetMap = { fast: "ultrafast", normal: "veryfast", slow: "medium" }
+    const preset = presetMap[conversionSpeed]
+
+    setProcessing(true)
+    setProgress(0)
 
     try {
-      await ffmpeg.writeFile(imageFile.name, await fetchFile(imageFile));
-      await ffmpeg.writeFile(audioFile.name, await fetchFile(audioFile));
+      // Write the audio file to FFmpeg's FS.
+      await ffmpeg.writeFile(audioFile.name, await fetchFile(audioFile))
+
+      let imageForConversion: File
+      // If either blur or sticker is enabled, use the composite image.
+      if (useBlurBackground || useSticker) {
+        if (!image) throw new Error("No image data available")
+        const compositeBlob = await createCompositeImage(image, outputWidth, outputHeight, {
+          blur: useBlurBackground,
+          sticker: useSticker,
+        })
+        imageForConversion = new File([compositeBlob], "compositeImage.png", { type: "image/png" })
+      } else {
+        // Otherwise, use the original image file.
+        const origImageFile = imageInputRef.current?.files?.[0]
+        if (!origImageFile) throw new Error("No image file available")
+        imageForConversion = origImageFile
+      }
+
+      // Write the (possibly processed) image file to FFmpeg's FS.
+      await ffmpeg.writeFile(imageForConversion.name, await fetchFile(imageForConversion))
+
+      let ffmpegArgs: string[]
+      if (!(useBlurBackground || useSticker)) {
+        // When neither blur nor sticker is used, apply a scale/pad filter.
+        const scaleFilter = `scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease, pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2:color=black`
+        ffmpegArgs = [
+          "-loop",
+          "1",
+          "-i",
+          imageForConversion.name,
+          "-i",
+          audioFile.name,
+          "-vf",
+          scaleFilter,
+          "-c:v",
+          "libx264",
+          "-preset",
+          preset,
+          "-tune",
+          "stillimage",
+          "-threads",
+          "0",
+          "-b:v",
+          videoBitrates[videoQuality],
+          "-c:a",
+          "aac",
+          "-b:a",
+          audioBitrates[audioQuality],
+          "-shortest",
+          "-movflags",
+          "+faststart",
+          "-pix_fmt",
+          "yuv420p",
+          "-y",
+          "output.mp4",
+        ]
+      } else {
+        // When using a composite image (blur and/or sticker), the image is already at the target size.
+        ffmpegArgs = [
+          "-loop",
+          "1",
+          "-i",
+          imageForConversion.name,
+          "-i",
+          audioFile.name,
+          "-c:v",
+          "libx264",
+          "-preset",
+          preset,
+          "-tune",
+          "stillimage",
+          "-threads",
+          "0",
+          "-b:v",
+          videoBitrates[videoQuality],
+          "-c:a",
+          "aac",
+          "-b:a",
+          audioBitrates[audioQuality],
+          "-shortest",
+          "-movflags",
+          "+faststart",
+          "-pix_fmt",
+          "yuv420p",
+          "-y",
+          "output.mp4",
+        ]
+      }
 
       progressHandlerRef.current = ({ message }: { message: string }) => {
-        const timeMatch = message.match(/time=(\d+:\d+:\d+\.\d+)/);
+        const timeMatch = message.match(/time=(\d+:\d+:\d+\.\d+)/)
         if (timeMatch) {
-          const timeParts = timeMatch[1].split(':').map(parseFloat);
-          const totalSeconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
-          const calculatedProgress = (totalSeconds / audioDuration) * 100;
-          setProgress(Math.min(calculatedProgress, 100));
+          const timeParts = timeMatch[1].split(":").map(Number.parseFloat)
+          const totalSeconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2]
+          const calculatedProgress = (totalSeconds / audioDuration) * 100
+          setProgress(Math.min(calculatedProgress, 100))
         }
-      };
+      }
 
-      ffmpeg.on('log', progressHandlerRef.current);
+      ffmpeg.on("log", progressHandlerRef.current)
 
-      const outputWidth = aspectRatio === '16:9' ? 1280 : 720;
-      const outputHeight = aspectRatio === '16:9' ? 720 : 1280;
-      const videoBitrates = { low: '500k', medium: '1000k', high: '5000k' };
-      const audioBitrates = { low: '64k', medium: '128k', high: '320k' };
+      await ffmpeg.exec(ffmpegArgs)
 
-      await ffmpeg.exec([
-        '-loop', '1',
-        '-i', imageFile.name,
-        '-i', audioFile.name,
-        '-vf', `scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,` +
-               `pad=${outputWidth}:${outputHeight}:-1:-1,setsar=1`,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-tune', 'stillimage',
-        '-b:v', videoBitrates[videoQuality],
-        '-c:a', 'aac',
-        '-b:a', audioBitrates[audioQuality],
-        '-shortest',
-        '-movflags', '+faststart',
-        '-pix_fmt', 'yuv420p',
-        '-y',
-        'output.mp4'
-      ]);
-
-      const outputData = await ffmpeg.readFile('output.mp4');
-      const blob = new Blob([outputData], { type: 'video/mp4' });
-      setVideoUrl(URL.createObjectURL(blob));
+      const outputData = await ffmpeg.readFile("output.mp4")
+      const blob = new Blob([outputData], { type: "video/mp4" })
+      setVideoUrl(URL.createObjectURL(blob))
     } catch (error) {
-      console.error('Conversion error:', error);
+      console.error("Conversion error:", error)
     } finally {
       if (progressHandlerRef.current) {
-        ffmpeg.off('log', progressHandlerRef.current);
+        ffmpeg.off("log", progressHandlerRef.current)
       }
-      setProcessing(false);
+      setProcessing(false)
     }
-  };
+  }
+
+  const getPreviewDimensions = () => {
+    const maxPreviewWidth = 400
+    const maxPreviewHeight = 400
+
+    if (aspectRatio === "16:9") {
+      const height = Math.min(maxPreviewWidth * (9 / 16), maxPreviewHeight)
+      const width = height * (16 / 9)
+      return { width, height }
+    } else {
+      const width = Math.min(maxPreviewHeight * (9 / 16), maxPreviewWidth)
+      const height = width * (16 / 9)
+      return { width, height }
+    }
+  }
+
+  const previewDimensions = getPreviewDimensions()
 
   return (
     <div className="container">
-      <h1 className="text-2xl font-bold mb-6">Media Converter</h1>
-      
+      <h1 className="text-2xl font-bold items-center text-center mb-6">Media Converter</h1>
+
       <div className="controls">
         <div className="input-group">
           <label>
             Upload Image:
             <input type="file" accept="image/*" ref={imageInputRef} onChange={handleImageChange} />
           </label>
-          {image && <img src={image} alt="Preview" className="preview" />}
+          {image && (
+            <div
+              className="preview-container"
+              style={{
+                width: `${previewDimensions.width}px`,
+                height: `${previewDimensions.height}px`,
+                position: "relative",
+                overflow: "hidden",
+                margin: "20px auto",
+                backgroundColor: "#000",
+              }}
+            >
+              {useBlurBackground && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundImage: `url(${image})`,
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                    filter: "blur(20px)",
+                    transform: "scale(1.1)",
+                  }}
+                />
+              )}
+              <img
+                src={image || "/placeholder.svg"}
+                alt="Preview"
+                style={{
+                  position: "absolute",
+                  top: "50%",
+                  left: "50%",
+                  transform: "translate(-50%, -50%)",
+                  maxWidth: "100%",
+                  maxHeight: "100%",
+                  objectFit: "contain",
+                }}
+              />
+              {/* If the sticker option is enabled, overlay the sticker in the bottom-right */}
+              {useSticker && (
+                <img
+                  src={"/static/images/sticker.png"}
+                  alt="Sticker"
+                  style={{
+                    position: "absolute",
+                    bottom: "10px",
+                    right: "10px",
+                    width: `${previewDimensions.width * 0.1}px`,
+                    height: "auto",
+                    zIndex: 10,
+                  }}
+                />
+              )}
+            </div>
+          )}
         </div>
 
         <div className="input-group">
@@ -162,73 +407,110 @@ const MediaConverter: React.FC = () => {
             <input type="file" accept="audio/*" ref={audioInputRef} onChange={handleAudioChange} />
           </label>
           {audio && <audio src={audio} controls className="preview" />}
+
+          <button
+              onClick={() => setUseBlurBackground(!useBlurBackground)}
+              style={{
+                padding: "8px 16px",
+                background: useBlurBackground ? "#3498db" : "#5cb85c",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                marginRight: "10px",
+                marginBottom: "20px",
+                marginTop: "0px"
+              }}
+            >
+              {useBlurBackground ? "Remove Blur" : "Add Blur"}
+            </button>
+            <button
+              onClick={() => setUseSticker(!useSticker)}
+              style={{
+                padding: "8px 16px",
+                background: useSticker ? "#d9534f" : "#5cb85c",
+                color: "white",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                marginBottom: "20px",
+                marginTop: "0px"
+              }}
+            >
+              {useSticker ? "Remove Sticker" : "Add Sticker"}
+            </button>
         </div>
 
         <div className="settings">
           <div className="setting-group">
             <label>Aspect Ratio:</label>
             <div>
-              <label>
+              <label className="mr-4">
                 <input
                   type="radio"
                   value="16:9"
-                  checked={aspectRatio === '16:9'}
-                  onChange={() => setAspectRatio('16:9')}
+                  checked={aspectRatio === "16:9"}
+                  onChange={() => setAspectRatio("16:9")}
                 />
-                16:9 (Landscape)
+                16:9 (Landscape = Youtube Full Screen )  
               </label>
               <label>
                 <input
                   type="radio"
                   value="9:16"
-                  checked={aspectRatio === '9:16'}
-                  onChange={() => setAspectRatio('9:16')}
+                  checked={aspectRatio === "9:16"}
+                  onChange={() => setAspectRatio("9:16")}
                 />
-                9:16 (Portrait)
+                9:16 (Portrait = Youtube Shorts, Instagram reels)
               </label>
             </div>
           </div>
 
-          <div className="setting-group">
-            <label>Video Quality:</label>
-            <select
-              value={videoQuality}
-              onChange={(e) => setVideoQuality(e.target.value as typeof videoQuality)}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+          <div className="setting-group horizontal">
+         
           </div>
 
-          <div className="setting-group">
-            <label>Audio Quality:</label>
-            <select
-              value={audioQuality}
-              onChange={(e) => setAudioQuality(e.target.value as typeof audioQuality)}
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+          <div className="setting-group horizontal">
+            <div>
+              <label>Video Quality:</label>
+              <select value={videoQuality} onChange={(e) => setVideoQuality(e.target.value as typeof videoQuality)}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Audio Quality:</label>
+              <select value={audioQuality} onChange={(e) => setAudioQuality(e.target.value as typeof audioQuality)}>
+                <option value="low">Low</option>
+                <option value="medium">Medium</option>
+                <option value="high">High</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Conversion Speed:</label>
+              <select
+                value={conversionSpeed}
+                onChange={(e) => setConversionSpeed(e.target.value as typeof conversionSpeed)}
+              >
+                <option value="fast">Fast</option>
+                <option value="normal">Normal</option>
+                <option value="slow">Slow</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <button 
-          onClick={handleConvertToVideo}
-          disabled={processing || !image || !audio}
-          className="convert-button"
-        >
-          {processing ? 'Processing...' : 'Convert to Video'}
+        <button onClick={handleConvertToVideo} disabled={processing || !image || !audio} className="convert-button">
+          {processing ? "Processing..." : "Convert to Video"}
         </button>
 
         {processing && (
           <div className="progress-container">
             <div className="progress-bar">
-              <div 
-                className="progress-fill" 
-                style={{ width: `${progress}%` }}
-              ></div>
+              <div className="progress-fill" style={{ width: `${progress}%` }}></div>
             </div>
             <div className="progress-text">
               {Math.round(progress)}% Complete
@@ -242,11 +524,11 @@ const MediaConverter: React.FC = () => {
           <div className="video-output">
             <h2 className="text-xl font-semibold mb-4">Output Video:</h2>
             <div className="player-wrapper">
-              <ReactPlayer 
-                url={videoUrl} 
+              <ReactPlayer
+                url={videoUrl}
                 controls={true}
-                width={aspectRatio === '16:9' ? '640px' : '360px'}
-                height={aspectRatio === '16:9' ? '360px' : '640px'}
+                width={aspectRatio === "16:9" ? "640px" : "360px"}
+                height={aspectRatio === "16:9" ? "360px" : "640px"}
                 playing={false}
                 className="react-player"
               />
@@ -260,14 +542,14 @@ const MediaConverter: React.FC = () => {
 
       <style jsx>{`
         .container {
-          max-width: 800px;
+          width: 1000px;
           margin: 0 auto;
           padding: 20px;
+          
         }
 
         .controls {
-          display: flex;
-          flex-direction: column;
+       
           gap: 20px;
         }
 
@@ -284,8 +566,8 @@ const MediaConverter: React.FC = () => {
         }
 
         .settings {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          display: flex;
+          flex-direction: column;
           gap: 15px;
           padding: 15px;
           border: 1px solid #ddd;
@@ -295,7 +577,28 @@ const MediaConverter: React.FC = () => {
         .setting-group {
           display: flex;
           flex-direction: column;
-          gap: 5px;
+          gap: 10px;
+        }
+                                                     
+        .setting-group.horizontal {
+          display: flex;
+          flex-direction: row;                /* <---these three are the buttons and conversion setteings */
+          justify-content: center;
+          align-items: center;
+          gap: 60px;
+        }
+
+        
+
+        .setting-group.horizontal > div {    
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .setting-group.horizontal select {
+          width: 100%;
+          margin-top: 5px;
         }
 
         .convert-button {
@@ -369,7 +672,8 @@ const MediaConverter: React.FC = () => {
         }
       `}</style>
     </div>
-  );
-};
+  )
+}
 
-export default MediaConverter;
+export default MediaConverter
+
