@@ -74,10 +74,9 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
         top: y,
         overflow: "hidden"
       };
-  // Note circles color notecolor
   const containerClass = fullScreen
     ? "fixed bg-black mt-10"
-    : "absolute bg-red-900 duration-0 hover:bg-red-700  rounded-full";
+    : "absolute bg-red-900 duration-0 hover:bg-red-700 rounded-full";
 
   const handleClick = () => {
     if (!fullScreen) {
@@ -287,16 +286,19 @@ const TopicCircle: React.FC<TopicCircleProps> = ({ centerX, centerY }) => {
 };
 
 const NoteTakingApp: React.FC = () => {
-  // Set up state for container dimensions and update on window resize.
-  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
+  // Initialize dimensions to 0 to avoid accessing window on server
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    const handleResize = () => {
+      setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    };
+    handleResize(); // Set initial dimensions on client
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Calculate center and note radius dynamically.
+  // Calculate center and note radius dynamically
   const centerX = dimensions.width / 2;
   const centerY = dimensions.height / 1.8;
   const noteRadius = Math.min(dimensions.width, dimensions.height) / 4;
@@ -314,13 +316,12 @@ const NoteTakingApp: React.FC = () => {
       ].map((angle, index) => (
         <Note
           key={index}
-          angle={angle} 
+          angle={angle}
           radius={noteRadius}
           noteSize={100}
           initialTitle={`+`}
           centerX={centerX}
           centerY={centerY}
-          
         />
       ))}
     </div>
