@@ -61,25 +61,7 @@ export default function RootLayout({
           </main>
 
          {/* FOOTER */}
-<footer className="w-full bg-black backdrop-blur-md shadow-md text-white py-4">
-  <div className="max-w-6xl mx-auto flex justify-between items-center px-4">
-    {/* Logo */}
-    <Link href="/" className="text-xl font-bold text-white tracking-wide">
-      My APP
-    </Link>
 
-    {/* Quick Links */}
-    <nav className="flex space-x-6 text-white font-medium">
-      <Link href="/" className="hover:text-gray-400">Contact</Link>
-
-    </nav>
-  </div>
-
-  {/* Copyright */}
-  <div className="text-center text-sm text-gray-400 mt-4">
-    © {new Date().getFullYear()} MyApp. All rights reserved.
-  </div>
-</footer>
 
         </ThemeProvider>
       </body>

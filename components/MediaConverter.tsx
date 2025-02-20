@@ -70,11 +70,11 @@ const createCompositeImage = (
         const stickerImg = new Image()
         stickerImg.crossOrigin = "anonymous"
         stickerImg.onload = () => {
-          // For example, set the sticker width to 20% of the canvas width.
+          // For example, set the sticker width to 10% of the canvas width.
           const stickerWidth = width * 0.1
           const stickerAspect = stickerImg.height / stickerImg.width
           const stickerHeight = stickerWidth * stickerAspect
-          // Place the sticker in the bottom-right with a 10px margin.
+          // Place the sticker in the bottom-right with a 20px margin.
           const stickerX = width - stickerWidth - 20
           const stickerY = height - stickerHeight - 20
           ctx.drawImage(stickerImg, stickerX, stickerY, stickerWidth, stickerHeight)
@@ -107,9 +107,10 @@ const MediaConverter: React.FC = () => {
   const [audio, setAudio] = useState<string | null>(null)
   const [audioDuration, setAudioDuration] = useState<number>(0)
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9")
-  const [videoQuality, setVideoQuality] = useState<"low" | "medium" | "high">("medium")
-  const [audioQuality, setAudioQuality] = useState<"low" | "medium" | "high">("medium")
-  const [conversionSpeed, setConversionSpeed] = useState<"fast" | "normal" | "slow">("fast")
+  const [videoQuality, setVideoQuality] = useState<"low" | "medium" | "high" | "uncompressed">("medium")
+  const [audioQuality, setAudioQuality] = useState<"low" | "medium" | "high" | "uncompressed">("medium")
+  // Updated conversionSpeed state to include "placebo"
+  const [conversionSpeed, setConversionSpeed] = useState<"ultrafast" | "fast" | "normal" | "slow" | "veryslow" | "placebo">("fast")
   const [processing, setProcessing] = useState<boolean>(false)
   const [progress, setProgress] = useState<number>(0)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
@@ -183,14 +184,28 @@ const MediaConverter: React.FC = () => {
     const audioFile = audioInputRef.current?.files?.[0]
     if (!audioFile || !audioDuration) return
 
-    // Determine output dimensions based on aspect ratio.
-    const outputWidth = aspectRatio === "16:9" ? 1280 : 720
-    const outputHeight = aspectRatio === "16:9" ? 720 : 1280
+    // Set default output dimensions.
+    let outputWidth = aspectRatio === "16:9" ? 1280 : 720
+    let outputHeight = aspectRatio === "16:9" ? 720 : 1280
+
+    // If uncompressed video is chosen, output up to 4K.
+    if (videoQuality === "uncompressed") {
+      outputWidth = aspectRatio === "16:9" ? 3840 : 2160
+      outputHeight = aspectRatio === "16:9" ? 2160 : 3840
+    }
+
     const videoBitrates = { low: "500k", medium: "1000k", high: "5000k" }
     const audioBitrates = { low: "64k", medium: "128k", high: "320k" }
 
     // Choose conversion preset based on conversion speed.
-    const presetMap = { fast: "ultrafast", normal: "veryfast", slow: "medium" }
+    const presetMap = {
+      ultrafast: "ultrafast",
+      fast: "superfast",
+      normal: "veryfast",
+      slow: "medium",
+      veryslow: "slow",
+      placebo: "placebo",
+    }
     const preset = presetMap[conversionSpeed]
 
     setProcessing(true)
@@ -219,73 +234,37 @@ const MediaConverter: React.FC = () => {
       // Write the (possibly processed) image file to FFmpeg's FS.
       await ffmpeg.writeFile(imageForConversion.name, await fetchFile(imageForConversion))
 
-      let ffmpegArgs: string[]
+      // If using uncompressed export for either audio or video, switch container to MOV.
+      const outputFilename = (videoQuality === "uncompressed" || audioQuality === "uncompressed")
+        ? "output.mov"
+        : "output.mp4"
+
+      // Build the FFmpeg argument list.
+      let ffmpegArgs: string[] = ["-loop", "1", "-i", imageForConversion.name, "-i", audioFile.name]
+
       if (!(useBlurBackground || useSticker)) {
-        // When neither blur nor sticker is used, apply a scale/pad filter.
         const scaleFilter = `scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease, pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2:color=black`
-        ffmpegArgs = [
-          "-loop",
-          "1",
-          "-i",
-          imageForConversion.name,
-          "-i",
-          audioFile.name,
-          "-vf",
-          scaleFilter,
-          "-c:v",
-          "libx264",
-          "-preset",
-          preset,
-          "-tune",
-          "stillimage",
-          "-threads",
-          "0",
-          "-b:v",
-          videoBitrates[videoQuality],
-          "-c:a",
-          "aac",
-          "-b:a",
-          audioBitrates[audioQuality],
-          "-shortest",
-          "-movflags",
-          "+faststart",
-          "-pix_fmt",
-          "yuv420p",
-          "-y",
-          "output.mp4",
-        ]
-      } else {
-        // When using a composite image (blur and/or sticker), the image is already at the target size.
-        ffmpegArgs = [
-          "-loop",
-          "1",
-          "-i",
-          imageForConversion.name,
-          "-i",
-          audioFile.name,
-          "-c:v",
-          "libx264",
-          "-preset",
-          preset,
-          "-tune",
-          "stillimage",
-          "-threads",
-          "0",
-          "-b:v",
-          videoBitrates[videoQuality],
-          "-c:a",
-          "aac",
-          "-b:a",
-          audioBitrates[audioQuality],
-          "-shortest",
-          "-movflags",
-          "+faststart",
-          "-pix_fmt",
-          "yuv420p",
-          "-y",
-          "output.mp4",
-        ]
+        ffmpegArgs.push("-vf", scaleFilter)
       }
+
+      // Video codec settings.
+      if (videoQuality === "uncompressed") {
+        ffmpegArgs.push("-c:v", "rawvideo", "-pix_fmt", "yuv420p")
+      } else {
+        ffmpegArgs.push("-c:v", "libx264", "-preset", preset, "-tune", "stillimage", "-b:v", videoBitrates[videoQuality], "-pix_fmt", "yuv420p")
+      }
+
+      ffmpegArgs.push("-threads", "0")
+
+      // Audio codec settings.
+      if (audioQuality === "uncompressed") {
+        // Use 32-bit float PCM with a forced sample rate of 48000 Hz.
+        ffmpegArgs.push("-c:a", "pcm_f32le", "-ar", "48000")
+      } else {
+        ffmpegArgs.push("-c:a", "aac", "-b:a", audioBitrates[audioQuality])
+      }
+
+      ffmpegArgs.push("-shortest", "-movflags", "+faststart", "-y", outputFilename)
 
       progressHandlerRef.current = ({ message }: { message: string }) => {
         const timeMatch = message.match(/time=(\d+:\d+:\d+\.\d+)/)
@@ -301,8 +280,8 @@ const MediaConverter: React.FC = () => {
 
       await ffmpeg.exec(ffmpegArgs)
 
-      const outputData = await ffmpeg.readFile("output.mp4")
-      const blob = new Blob([outputData], { type: "video/mp4" })
+      const outputData = await ffmpeg.readFile(outputFilename)
+      const blob = new Blob([outputData], { type: outputFilename.endsWith(".mov") ? "video/quicktime" : "video/mp4" })
       setVideoUrl(URL.createObjectURL(blob))
     } catch (error) {
       console.error("Conversion error:", error)
@@ -330,6 +309,14 @@ const MediaConverter: React.FC = () => {
   }
 
   const previewDimensions = getPreviewDimensions()
+
+  const Sethighestquality = () => {
+    return (
+      setAudioQuality("high"),
+      setVideoQuality("high"),
+      setConversionSpeed("slow")
+    )
+  }
 
   return (
     <div className="container">
@@ -452,7 +439,7 @@ const MediaConverter: React.FC = () => {
                   checked={aspectRatio === "16:9"}
                   onChange={() => setAspectRatio("16:9")}
                 />
-                16:9 (Landscape = Youtube Full Screen )  
+                16:9 (Landscape = Youtube Full Screen )
               </label>
               <label>
                 <input
@@ -467,16 +454,13 @@ const MediaConverter: React.FC = () => {
           </div>
 
           <div className="setting-group horizontal">
-         
-          </div>
-
-          <div className="setting-group horizontal">
             <div>
               <label>Video Quality:</label>
               <select value={videoQuality} onChange={(e) => setVideoQuality(e.target.value as typeof videoQuality)}>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
+                <option value="uncompressed">Uncompressed</option>
               </select>
             </div>
 
@@ -486,6 +470,7 @@ const MediaConverter: React.FC = () => {
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
                 <option value="high">High</option>
+                <option value="uncompressed">Uncompressed</option>
               </select>
             </div>
 
@@ -495,13 +480,24 @@ const MediaConverter: React.FC = () => {
                 value={conversionSpeed}
                 onChange={(e) => setConversionSpeed(e.target.value as typeof conversionSpeed)}
               >
+                <option value="ultrafast">Ultra Fast</option>
                 <option value="fast">Fast</option>
                 <option value="normal">Normal</option>
                 <option value="slow">Slow</option>
+                <option value="veryslow">Very Slow</option>
+                <option value="placebo">Placebo (Ultra Slow)</option>
               </select>
             </div>
+
+            <button 
+              onClick={Sethighestquality} 
+              className="bg-amber-600 hover:bg-amber-800 text-white font-medium px-4 py-2 rounded-lg transition-colors"
+            >
+              HIGHEST QUALITY EXPORT
+            </button>
           </div>
         </div>
+        <h1 className="text-black text-xl ml-96 mt-4">Slower Conversion speed = Higher Quality</h1>
 
         <button onClick={handleConvertToVideo} disabled={processing || !image || !audio} className="convert-button">
           {processing ? "Processing..." : "Convert to Video"}
@@ -545,11 +541,9 @@ const MediaConverter: React.FC = () => {
           width: 1000px;
           margin: 0 auto;
           padding: 20px;
-          
         }
 
         .controls {
-       
           gap: 20px;
         }
 
@@ -582,13 +576,11 @@ const MediaConverter: React.FC = () => {
                                                      
         .setting-group.horizontal {
           display: flex;
-          flex-direction: row;                /* <---these three are the buttons and conversion setteings */
+          flex-direction: row;
           justify-content: center;
           align-items: center;
           gap: 60px;
         }
-
-        
 
         .setting-group.horizontal > div {    
           display: flex;
@@ -676,4 +668,3 @@ const MediaConverter: React.FC = () => {
 }
 
 export default MediaConverter
-
