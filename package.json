@@ -24,6 +24,7 @@
     "clsx": "^2.1.1",
     "ffmpeg.js": "^4.2.9003",
     "file-saver": "^2.0.5",
+    "framer-motion": "^12.4.5",
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^0.468.0",
