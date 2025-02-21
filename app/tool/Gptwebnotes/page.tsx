@@ -2,22 +2,51 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 
+// Define color options for note circles
+const colorOptions = [
+  { base: "bg-gray-500", hover: "hover:bg-gray-600" },
+  { base: "bg-green-500", hover: "hover:bg-green-600" },
+  { base: "bg-red-500", hover: "hover:bg-red-600" },
+  { base: "bg-blue-500", hover: "hover:bg-blue-600" },
+  { base: "bg-yellow-500", hover: "hover:bg-yellow-600" },
+  { base: "bg-orange-500", hover: "hover:bg-orange-600" },
+  { base: "bg-purple-500", hover: "hover:bg-purple-600" },
+  { base: "bg-black", hover: "hover:bg-gray-800" },
+  { base: "bg-pink-500", hover: "hover:bg-pink-600" },
+  { base: "bg-yellow-800", hover: "hover:bg-yellow-900" },
+];
+
 interface NoteProps {
-  angle: number;     // Angle (in radians) for placement
-  radius: number;    // Distance from center of container
-  noteSize: number;  // Base diameter for the note circle
+  angle?: number;
+  radius?: number;
+  noteSize: number;
   initialTitle: string;
   centerX: number;
   centerY: number;
+  isMini?: boolean;
+  overridePosition?: { x: number; y: number };
+  onDelete?: () => void;
 }
 
-const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, centerX, centerY }) => {
+const Note: React.FC<NoteProps> = ({
+  angle = 0,
+  radius = 0,
+  noteSize,
+  initialTitle,
+  centerX,
+  centerY,
+  isMini = false,
+  overridePosition,
+  onDelete,
+}) => {
   const [fullScreen, setFullScreen] = useState(false);
-  const [title, setTitle] = useState(""); // Initialize title as empty
+  const [title, setTitle] = useState("");
   const [imageSrc, setImageSrc] = useState<string | null>(null);
   const noteRef = useRef<HTMLDivElement>(null);
   const noteContentRef = useRef<HTMLDivElement>(null);
   const [imageExpanded, setImageExpanded] = useState(false);
+  const [colorIndex, setColorIndex] = useState(0);
+  const [miniNotes, setMiniNotes] = useState([false, false, false]);
 
   // Draggable image state
   const [imagePos, setImagePos] = useState({ x: 20, y: 20 });
@@ -27,12 +56,12 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
   const [hasDragged, setHasDragged] = useState(false);
   const [initialMousePos, setInitialMousePos] = useState<{ x: number; y: number } | null>(null);
 
-  // Keep note at its base size when not in fullscreen.
   const currentSize = noteSize;
-  const x = centerX + radius * Math.cos(angle) - currentSize / 2;
-  const y = centerY + radius * Math.sin(angle) - currentSize / 2;
+  const posX = overridePosition ? overridePosition.x : centerX + radius * Math.cos(angle) - currentSize / 2;
+  const posY = overridePosition ? overridePosition.y : centerY + radius * Math.sin(angle) - currentSize / 2;
 
-  // Handle file drop (only active in fullscreen)
+  const currentColor = colorOptions[colorIndex % colorOptions.length];
+
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     if (fullScreen && e.dataTransfer.files && e.dataTransfer.files[0]) {
@@ -46,8 +75,8 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
             const containerWidth = container.clientWidth;
             const containerHeight = container.clientHeight;
             setImagePos({
-              x: (containerWidth - 100) / 2, // Center horizontally
-              y: (containerHeight - 100) / 2  // Center vertically
+              x: (containerWidth - 100) / 2,
+              y: (containerHeight - 100) / 2,
             });
           }
         };
@@ -57,26 +86,26 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
   };
 
   const containerStyle: React.CSSProperties = fullScreen
-    ? { 
-        position: "fixed", 
-        top: "10%", 
-        left: "10%", 
-        width: "80%", 
-        height: "80%", 
+    ? {
+        position: "fixed",
+        top: "10%",
+        left: "10%",
+        width: "80%",
+        height: "80%",
         zIndex: 50,
-        borderRadius: "0"
+        borderRadius: "0",
       }
-    : { 
-        position: "absolute", 
-        width: currentSize, 
-        height: currentSize, 
-        left: x, 
-        top: y,
-        overflow: "hidden"
+    : {
+        position: "absolute",
+        width: currentSize,
+        height: currentSize,
+        left: posX,
+        top: posY,
+        overflow: "hidden",
       };
   const containerClass = fullScreen
     ? "fixed bg-black mt-10"
-    : "absolute bg-red-900 duration-0 hover:bg-red-700 rounded-full";
+    : `absolute ${currentColor.base} duration-0 ${currentColor.hover} rounded-full`;
 
   const handleClick = () => {
     if (!fullScreen) {
@@ -108,7 +137,6 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
     }
   };
 
-  // Image drag functionality
   const handleImageMouseDown = (e: React.MouseEvent<HTMLImageElement>) => {
     e.stopPropagation();
     if (fullScreen && !imageExpanded) {
@@ -168,92 +196,190 @@ const Note: React.FC<NoteProps> = ({ angle, radius, noteSize, initialTitle, cent
     };
   }, [isDragging, mouseIsDown, dragOffset]);
 
-  return (
-    <div
-      ref={noteRef}
-      className={`${containerClass} flex items-center justify-center cursor-pointer transition-all duration-300`}
-      style={containerStyle}
-      onClick={handleClick}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-    >
-      {!fullScreen && (
-        <span className="text-white text-sm">{title || initialTitle}</span>
-      )}
+  // Mini notes logic (only for main notes, not mini notes)
+  let miniNotesElements = null;
+  if (!isMini && !fullScreen) {
+    const miniNoteSize = noteSize * 0.35; // 50px for mini notes if noteSize is 100px
+    const additionalRadius = noteSize / 2 + miniNoteSize / 2 + 20; // e.g., 50 + 25 + 20 = 95px
+    const miniNoteRadius = radius + additionalRadius; // Places mini notes outside main note circle
+    const ux = Math.cos(angle); // Radial unit vector x-component
+    const uy = Math.sin(angle); // Radial unit vector y-component
+    const offset = (miniNoteSize + 40) / 2; // distance between mini notes, Tangential offset, e.g., (50 + 10) / 2 = 30px
 
-      {fullScreen && (
-        <div className="w-full h-full relative p-2 flex flex-col items-center justify-start">
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setFullScreen(false);
-            }}
-            className="absolute top-2 right-2 bg-gray-700 text-white px-2 py-1 text-xs rounded"
-          >
-            Exit FS
-          </button>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full text-xl font-bold text-center bg-transparent text-white focus:outline-none mb-2"
-            placeholder="Enter title..."
-          />
-          <div
-            ref={noteContentRef}
-            contentEditable={true}
-            className="flex-1 bg-transparent text-white w-full overflow-auto cursor-text"
-            style={{ minHeight: "50px" }}
-            onClick={handleNotepadClick}
-          >
-            {/* Type your note here */}
-          </div>
-          {imageSrc && imageExpanded && (
-            <div 
-              className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-80 flex items-center justify-center z-50"
+    // Calculate centers for mini notes, positioned tangentially
+    const miniNoteCenters = [
+      {
+        cx: centerX + miniNoteRadius * ux - offset * uy,
+        cy: centerY + miniNoteRadius * uy + offset * ux,
+      },
+      {
+        cx: centerX + miniNoteRadius * ux,
+        cy: centerY + miniNoteRadius * uy,
+      },
+      {
+        cx: centerX + miniNoteRadius * ux + offset * uy,
+        cy: centerY + miniNoteRadius * uy - offset * ux,
+      },
+    ];
+
+    // Calculate top-left positions from centers
+    const miniNotePositions = miniNoteCenters.map(({ cx, cy }) => ({
+      x: cx - miniNoteSize / 2,
+      y: cy - miniNoteSize / 2,
+    }));
+
+    miniNotesElements = miniNotes.map((isOccupied, i) => (
+      isOccupied ? (
+        <Note
+          key={i}
+          overridePosition={miniNotePositions[i]}
+          isMini={true}
+          noteSize={miniNoteSize}
+          initialTitle="+"
+          centerX={centerX}
+          centerY={centerY}
+          angle={0}
+          radius={0}
+          onDelete={() => {
+            setMiniNotes((prev) => {
+              const newMiniNotes = [...prev];
+              newMiniNotes[i] = false;
+              return newMiniNotes;
+            });
+          }}
+        />
+      ) : (
+        <div
+          key={i}
+          className="absolute bg-gray-500 rounded-full flex items-center justify-center text-white cursor-pointer"
+          style={{
+            left: miniNotePositions[i].x,
+            top: miniNotePositions[i].y,
+            width: miniNoteSize,
+            height: miniNoteSize,
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setMiniNotes((prev) => {
+              const newMiniNotes = [...prev];
+              newMiniNotes[i] = true;
+              return newMiniNotes;
+            });
+          }}
+        >
+          +
+        </div>
+      )
+    ));
+  }
+
+  return (
+    <>
+      <div
+        ref={noteRef}
+        className={`${containerClass} flex items-center justify-center cursor-pointer transition-all duration-300`}
+        style={containerStyle}
+        onClick={handleClick}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+      >
+        {!fullScreen && (
+          <span className="text-white text-sm">{title || initialTitle}</span>
+        )}
+
+        {fullScreen && (
+          <div className="w-full h-full relative p-2 flex flex-col items-center justify-start">
+            <button
               onClick={(e) => {
                 e.stopPropagation();
-                setImageExpanded(false);
+                setColorIndex((prev) => (prev + 1) % colorOptions.length);
               }}
+              className={`absolute top-2 left-2 ${currentColor.base} text-white px-2 py-1 text-xs rounded`}
             >
-              <div className="relative max-w-3xl max-h-3xl">
-                <img
-                  src={imageSrc}
-                  alt="Expanded"
-                  className="max-w-full max-h-screen object-contain"
-                />
-                <button
-                  className="absolute top-4 right-4 bg-gray-800 text-white rounded-full w-8 h-8 flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setImageExpanded(false);
-                  }}
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          )}
-          {imageSrc && (
-            <img
-              src={imageSrc}
-              alt="Dropped"
-              className={`absolute object-contain rounded ${mouseIsDown ? 'cursor-grabbing' : 'cursor-grab'}`}
-              style={{
-                width: "100px",
-                left: imagePos.x,
-                top: imagePos.y,
-                userSelect: "none",
-                WebkitUserSelect: "none"
+              Change Color
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setFullScreen(false);
               }}
-              onMouseDown={handleImageMouseDown}
-              onClick={handleImageClick}
-              draggable={false}
+              className="absolute top-2 right-2 bg-gray-700 text-white px-2 py-1 text-xs rounded"
+            >
+              Done
+            </button>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full text-xl font-bold text-center bg-transparent text-white focus:outline-none mb-2"
+              placeholder="Enter title..."
             />
-          )}
-        </div>
-      )}
-    </div>
+            <div
+              ref={noteContentRef}
+              contentEditable={true}
+              className="flex-1 bg-transparent text-white w-full overflow-auto cursor-text"
+              style={{ minHeight: "50px" }}
+              onClick={handleNotepadClick}
+            />
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm("Are you sure you want to permanently delete this note?")) {
+                  onDelete?.();
+                }
+              }}
+              className="absolute bottom-2 right-2 bg-red-500 text-white px-2 py-1 text-xs rounded"
+            >
+              Delete Note
+            </button>
+            {imageSrc && imageExpanded && (
+              <div
+                className="fixed top-0 left-0 w-full h-full bg-black bg-opacity-80 flex items-center justify-center z-50"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setImageExpanded(false);
+                }}
+              >
+                <div className="relative max-w-3xl max-h-3xl">
+                  <img
+                    src={imageSrc}
+                    alt="Expanded"
+                    className="max-w-full max-h-screen object-contain"
+                  />
+                  <button
+                    className="absolute top-4 right-4 bg-gray-800 text-white rounded-full w-8 h-8 flex items-center justify-center"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setImageExpanded(false);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+            {imageSrc && (
+              <img
+                src={imageSrc}
+                alt="Dropped"
+                className={`absolute object-contain rounded ${mouseIsDown ? 'cursor-grabbing' : 'cursor-grab'}`}
+                style={{
+                  width: "100px",
+                  left: imagePos.x,
+                  top: imagePos.y,
+                  userSelect: "none",
+                  WebkitUserSelect: "none",
+                }}
+                onMouseDown={handleImageMouseDown}
+                onClick={handleImageClick}
+                draggable={false}
+              />
+            )}
+          </div>
+        )}
+      </div>
+      {miniNotesElements}
+    </>
   );
 };
 
@@ -263,7 +389,7 @@ interface TopicCircleProps {
 }
 
 const TopicCircle: React.FC<TopicCircleProps> = ({ centerX, centerY }) => {
-  const size = 120; // Central circle size
+  const size = 120;
   const [title, setTitle] = useState("Topic");
   return (
     <div
@@ -286,19 +412,25 @@ const TopicCircle: React.FC<TopicCircleProps> = ({ centerX, centerY }) => {
 };
 
 const NoteTakingApp: React.FC = () => {
-  // Initialize dimensions to 0 to avoid accessing window on server
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const [notes, setNotes] = useState([
+    { id: 0, angle: 0 },
+    { id: 1, angle: Math.PI / 3 },
+    { id: 2, angle: (2 * Math.PI) / 3 },
+    { id: 3, angle: Math.PI },
+    { id: 4, angle: (4 * Math.PI) / 3 },
+    { id: 5, angle: (5 * Math.PI) / 3 },
+  ]);
 
   useEffect(() => {
     const handleResize = () => {
       setDimensions({ width: window.innerWidth, height: window.innerHeight });
     };
-    handleResize(); // Set initial dimensions on client
+    handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Calculate center and note radius dynamically
   const centerX = dimensions.width / 2;
   const centerY = dimensions.height / 1.8;
   const noteRadius = Math.min(dimensions.width, dimensions.height) / 4;
@@ -306,22 +438,18 @@ const NoteTakingApp: React.FC = () => {
   return (
     <div className="">
       <TopicCircle centerX={centerX} centerY={centerY} />
-      {[
-        0,
-        Math.PI / 3,
-        (2 * Math.PI) / 3,
-        Math.PI,
-        (4 * Math.PI) / 3,
-        (5 * Math.PI) / 3,
-      ].map((angle, index) => (
+      {notes.map((note) => (
         <Note
-          key={index}
-          angle={angle}
+          key={note.id}
+          angle={note.angle}
           radius={noteRadius}
           noteSize={100}
           initialTitle={`+`}
           centerX={centerX}
           centerY={centerY}
+          onDelete={() => {
+            setNotes((prev) => prev.filter((n) => n.id !== note.id));
+          }}
         />
       ))}
     </div>
